@@ -1,0 +1,613 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>互動旅遊地圖 (V3.7 比例置中)</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- LeafletJS Map Library -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Google Fonts: Inter & Noto Sans TC -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        /* --- V3.7 全局與佈局樣式 --- */
+        html, body {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: 'Inter', 'Noto Sans TC', sans-serif;
+        }
+
+        #app-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+
+        /* --- V3.7 浮動面板樣式 --- */
+        #main-panel {
+            position: absolute;
+            z-index: 10;
+            background-color: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(3px);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        /* 桌面版 (寬螢幕) 樣式 */
+        @media (min-width: 768px) {
+            #main-panel {
+                bottom: 1rem;
+                right: 1rem;
+                width: 25%;
+                max-width: 400px;
+                min-width: 320px;
+                border-radius: 1.5rem;
+                max-height: 200px; 
+                transition: max-height 0.4s ease-in-out;
+            }
+
+            #main-panel:hover {
+                max-height: calc(100vh - 2rem);
+            }
+        }
+
+        /* 手機版 (窄螢幕) 樣式 */
+        @media (max-width: 767px) {
+            #main-panel {
+                top: 0;
+                left: 0;
+                right: 0;
+                bottom: 0;
+                width: 100%;
+                height: 100%;
+                border-radius: 0;
+            }
+        }
+
+        /* --- V3.7 卡片與內容樣式 --- */
+        main {
+            flex-grow: 1;
+            overflow-y: auto;
+        }
+        
+        .map-date-group, .itinerary-date-group {
+            background-color: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(3px);
+        }
+        .date-header {
+             background-color: rgba(255, 255, 255, 0.2);
+        }
+        .card {
+            background-color: rgba(255, 255, 255, 0.3);
+        }
+        .map-date-group-content {
+            background-color: rgba(248, 250, 252, 0.1);
+        }
+
+        .map-date-group-content, .itinerary-date-group-content { max-height: 0; overflow: hidden; transition: max-height 0.5s ease-in-out; }
+        .map-date-group.expanded .map-date-group-content, .itinerary-date-group.expanded .itinerary-date-group-content { max-height: 2000px; }
+        .details { max-height: 0; overflow: hidden; transition: max-height 0.5s ease-out; }
+        .card.active .details { max-height: 500px; transition: max-height 0.5s ease-in; }
+        .expand-icon { transition: transform 0.5s ease-in-out; }
+        .expanded .expand-icon { transform: rotate(180deg); }
+        
+        /* --- 圖示樣式 --- */
+        .custom-marker-icon {
+            background-color: #ffffff;
+            border: 2px solid #1d4ed8;
+            border-radius: 50%;
+            width: 36px;
+            height: 36px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+            position: relative;
+        }
+        .custom-marker-icon span { font-size: 22px; line-height: 1; }
+        .custom-marker-icon::after {
+            content: '';
+            position: absolute;
+            bottom: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 0;
+            height: 0;
+            border-left: 8px solid transparent;
+            border-right: 8px solid transparent;
+            border-top: 10px solid #1d4ed8;
+        }
+        .leaflet-div-icon { background: transparent; border: none; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div id="app-container">
+        <div id="map"></div>
+
+        <div id="main-panel" class="floating-panel">
+            <div class="p-4 border-b border-gray-200/80 flex-shrink-0">
+                <header class="text-center">
+                    <h1 id="main-title" class="text-xl md:text-2xl font-bold text-gray-900 truncate">讀取中...</h1>
+                    <p id="main-subtitle" class="text-gray-600 mt-1 text-sm truncate"></p>
+                </header>
+                <div class="mt-4">
+                    <label for="trip-selector" class="sr-only">選擇一趟旅程</label>
+                    <select id="trip-selector" class="block w-full p-2 border border-gray-300 bg-white rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition text-sm">
+                        <option value="">正在載入旅程清單...</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="flex-shrink-0 p-2 bg-gray-200/50">
+                <div class="flex justify-center space-x-2 bg-gray-200 p-1 rounded-full w-full max-w-sm mx-auto">
+                    <button id="map-btn" class="w-full py-2 px-4 rounded-full text-sm font-semibold transition-colors duration-300 bg-white text-blue-600 shadow">互動地圖</button>
+                    <button id="itinerary-btn" class="w-full py-2 px-4 rounded-full text-sm font-semibold transition-colors duration-300 text-gray-600">詳細行程</button>
+                </div>
+            </div>
+
+            <main>
+                <div id="map-view">
+                    <div id="cards-container" class="p-2 md:p-4 space-y-4"></div>
+                </div>
+                <div id="itinerary-view" class="hidden">
+                    <div id="itinerary-cards-container" class="p-2 md:p-4 space-y-4"></div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+    // =======================================================================
+    // V3.7 - 全域變數與設定
+    // =======================================================================
+    let allTrips = [];
+    let processedTripData = [];
+    let dailyTitles = {};
+    let icons = {};
+
+    const tripSelector = document.getElementById('trip-selector');
+    const mapBtn = document.getElementById('map-btn');
+    const itineraryBtn = document.getElementById('itinerary-btn');
+    const mapView = document.getElementById('map-view');
+    const itineraryView = document.getElementById('itinerary-view');
+    const cardsContainer = document.getElementById('cards-container');
+    const itineraryCardsContainer = document.getElementById('itinerary-cards-container');
+    const mainTitleEl = document.getElementById('main-title');
+    const mainSubtitleEl = document.getElementById('main-subtitle');
+
+    const map = L.map('map', { zoomControl: false }).setView([12.8797, 121.7740], 6);
+    L.control.zoom({ position: 'bottomleft' }).addTo(map);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+    let activeLayer = null;
+    let hoverLayer = null;
+
+    const tripsMetaUrl = 'https://gist.githubusercontent.com/PeterH607037/8bbc0df6575d19f3767da0230d0e989d/raw/c8d7f3e255bd250c152a267ff943f4c6e3d1c953/trip_gpx_meta2.json';
+
+    const createEmojiIcon = (emoji) => L.divIcon({
+        html: `<div class="custom-marker-icon"><span>${emoji}</span></div>`,
+        className: '',
+        iconSize: [40, 46],
+        iconAnchor: [20, 46]
+    });
+
+    // =======================================================================
+    // V3.7 - 程式主要邏輯
+    // =======================================================================
+
+    function resetUI() {
+        clearMapHighlights();
+        if (activeLayer) { map.removeLayer(activeLayer); activeLayer = null; }
+        cardsContainer.innerHTML = '';
+        itineraryCardsContainer.innerHTML = '';
+        processedTripData = [];
+        dailyTitles = {};
+        icons = {};
+        mainTitleEl.textContent = '請選擇一趟旅程';
+        mainSubtitleEl.textContent = '從上方的下拉選單開始';
+    }
+
+    async function loadAndDisplayTrip(dataLink, iconsLink) {
+        resetUI();
+        mainTitleEl.textContent = "讀取中...";
+        mainSubtitleEl.textContent = "";
+
+        try {
+            const [iconResponse, dataResponse] = await Promise.all([
+                fetch(iconsLink, { cache: 'no-cache' }),
+                fetch(dataLink, { cache: 'no-cache' })
+            ]);
+
+            if (!iconResponse.ok) throw new Error(`讀取圖示設定失敗 (${iconsLink})`);
+            if (!dataResponse.ok) throw new Error(`讀取行程資料失敗 (${dataLink})`);
+
+            const iconData = await iconResponse.json();
+            const tripData = await dataResponse.json();
+
+            if (iconData.iconMapping) {
+                for (const category in iconData.iconMapping) {
+                    icons[category] = createEmojiIcon(iconData.iconMapping[category]);
+                }
+            }
+            icons.default = createEmojiIcon('📌');
+
+            dailyTitles = tripData.dailyTitles;
+            processedTripData = tripData.tripData.map((item, index) => ({ ...item, fullDate: item.date, originalIndex: index }));
+            
+            mainTitleEl.textContent = tripData.mainTitle || "我的旅程";
+            mainSubtitleEl.textContent = tripData.mainSubtitle || "一段難忘的冒險";
+
+            createDateGroupedMapCards();
+            createItineraryCards();
+
+            setTimeout(() => {
+                const firstGroup = document.querySelector('.map-date-group');
+                if (firstGroup) {
+                    firstGroup.classList.add('expanded');
+                    showDateOnMap(firstGroup.dataset.day);
+                } else {
+                    const bounds = L.latLngBounds(processedTripData.map(p => p.coords || (p.path ? p.path[0] : null)).filter(Boolean));
+                    if(bounds.isValid()) {
+                        map.flyToBounds(bounds, { padding: [50, 50], maxZoom: 14 });
+                    }
+                }
+            }, 100);
+
+        } catch (error) {
+            console.error("載入旅程時發生錯誤:", error);
+            mainTitleEl.textContent = "資料載入失敗";
+            mainSubtitleEl.textContent = `錯誤詳情: ${error.message}`;
+        }
+    }
+    
+    async function initializeTripSelector() {
+        try {
+            const response = await fetch(tripsMetaUrl, { cache: 'no-cache' });
+            if (!response.ok) throw new Error(`讀取主設定檔失敗: ${response.status}`);
+            
+            const metaData = await response.json();
+            allTrips = metaData.trips || [];
+
+            if (allTrips.length === 0) {
+                tripSelector.innerHTML = '<option value="">沒有可用的旅程</option>';
+                return;
+            }
+
+            tripSelector.innerHTML = '';
+            allTrips.forEach((trip, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = trip.tripName;
+                tripSelector.appendChild(option);
+            });
+
+            if (allTrips.length > 0) {
+                const firstTrip = allTrips[0];
+                loadAndDisplayTrip(firstTrip.dataUrl, firstTrip.iconUrl);
+            }
+
+        } catch (error) {
+            console.error("初始化旅程選擇器時發生錯誤:", error);
+            mainTitleEl.textContent = "旅程清單載入失敗";
+            mainSubtitleEl.textContent = "請檢查主設定檔(Meta JSON)的連結是否正確。";
+            tripSelector.innerHTML = '<option value="">載入失敗</option>';
+        }
+    }
+
+    function createDateGroupedMapCards() {
+        cardsContainer.innerHTML = ''; 
+        const groupedByDay = processedTripData.reduce((acc, item) => {
+            const day = item.day || 'misc';
+            acc[day] = acc[day] || [];
+            acc[day].push(item);
+            return acc;
+        }, {});
+
+        if (Object.keys(groupedByDay).length === 0) {
+            cardsContainer.innerHTML = `<div class="p-4 text-center text-gray-500">此行程沒有可顯示的卡片資料。</div>`;
+            return;
+        }
+
+        Object.keys(groupedByDay).sort().forEach(dayKey => {
+            const items = groupedByDay[dayKey];
+            const firstItem = items[0];
+            const dateGroup = document.createElement('div');
+            dateGroup.className = 'map-date-group rounded-2xl shadow-md overflow-hidden transition-all duration-300';
+            dateGroup.dataset.day = dayKey;
+
+            let nestedCardsHtml = items.map(item => {
+                let cardClasses = "card cursor-pointer transition-all duration-200";
+                let titleClasses = "font-semibold text-gray-800";
+                let locationClasses = "text-sm text-gray-500";
+                if (item.type === 'line') {
+                    cardClasses += " rounded-md p-2 hover:bg-slate-200/50 text-right";
+                    titleClasses = "font-medium text-xs text-gray-600";
+                    locationClasses = "text-xs text-gray-400";
+                } else {
+                    cardClasses += " rounded-lg p-3 hover:ring-2 hover:ring-blue-400 shadow-sm";
+                }
+                
+                return `<div class="${cardClasses}" data-index="${item.originalIndex}">
+                    <div class="flex justify-between items-center">
+                        <div>
+                            <h4 class="${titleClasses}">${item.title}</h4>
+                            <p class="${locationClasses}">${item.location || ''}</p>
+                        </div>
+                    </div>
+                    <div class="details mt-2">
+                        <p class="text-sm text-gray-600">${item.description || ''}</p>
+                        <p class="text-sm text-gray-500 mt-1">${item.time ? `時間: ${item.time}` : ''}</p>
+                        <textarea class="w-full mt-2 p-2 border rounded-md text-sm" placeholder="在這裡新增您的筆記..."></textarea>
+                    </div>
+                </div>`;
+            }).join('');
+
+            const titles = dailyTitles[dayKey] || { mainTitle: dayKey, subtitle: '當日行程' };
+            const dateHeaderHtml = `<div class="date-header p-4 cursor-pointer hover:bg-gray-50/50 transition-colors flex justify-between items-center border-b">
+                <div class="flex-grow">
+                    <p class="text-xs font-semibold text-blue-600">${dayKey.toUpperCase()} - ${firstItem.fullDate || ''}</p>
+                    <h3 class="text-lg font-bold text-gray-900 mt-1">${titles.mainTitle}</h3>
+                    <p class="text-sm text-gray-500">${titles.subtitle}</p>
+                </div>
+                <svg class="expand-icon h-6 w-6 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+            </div>`;
+            
+            dateGroup.innerHTML = `${dateHeaderHtml}<div class="map-date-group-content p-3 space-y-2">${nestedCardsHtml}</div>`;
+            cardsContainer.appendChild(dateGroup);
+        });
+    }
+
+    function createItineraryCards() {
+        itineraryCardsContainer.innerHTML = ''; 
+        const groupedByDay = processedTripData.reduce((acc, item) => {
+            const day = item.day || 'misc';
+            acc[day] = acc[day] || [];
+            acc[day].push(item);
+            return acc;
+        }, {});
+
+        if (Object.keys(groupedByDay).length === 0) {
+            itineraryCardsContainer.innerHTML = `<div class="p-4 text-center text-gray-500">此行程沒有可顯示的詳細資料。</div>`;
+            return;
+        }
+
+        Object.keys(groupedByDay).sort().forEach(dayKey => {
+            const items = groupedByDay[dayKey];
+            const firstItem = items[0];
+            const titles = dailyTitles[dayKey] || { mainTitle: dayKey, subtitle: '當日行程' };
+            const groupEl = document.createElement('div');
+            groupEl.className = 'itinerary-date-group rounded-2xl shadow-md overflow-hidden';
+            
+            let itemsHtml = items.map(item => `
+                <div class="p-4 border-b last:border-b-0">
+                    <h4 class="font-bold">${item.title}</h4>
+                    <p class="text-sm text-gray-600">${item.location || ''}</p>
+                    ${item.time ? `<p class="text-sm text-gray-500 mt-1">時間: ${item.time}</p>` : ''}
+                    ${item.description ? `<p class="text-sm text-gray-700 mt-2">${item.description}</p>` : ''}
+                </div>
+            `).join('');
+
+            groupEl.innerHTML = `
+                <div class="date-header p-4 cursor-pointer hover:bg-gray-50/50 flex justify-between items-center border-b">
+                    <div>
+                        <p class="text-xs font-semibold text-blue-600">${dayKey.toUpperCase()} - ${firstItem.fullDate || ''}</p>
+                        <h3 class="text-lg font-bold">${titles.mainTitle}</h3>
+                        <p class="text-sm text-gray-500">${titles.subtitle}</p>
+                    </div>
+                    <svg class="expand-icon h-6 w-6 text-gray-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+                </div>
+                <div class="itinerary-date-group-content">${itemsHtml}</div>
+            `;
+            itineraryCardsContainer.appendChild(groupEl);
+        });
+    }
+
+    function getLineStyle(transport) {
+        if (transport && transport.includes('步行')) return { color: '#3b82f6', weight: 3, dashArray: '3, 8', lineCap: 'round' };
+        if (transport && transport.includes('船')) return { color: '#0891b2', weight: 4, dashArray: '15, 10' };
+        if (transport && (transport.includes('車') || transport.includes('巴士'))) return { color: '#f97316', weight: 4 };
+        return { color: '#3b82f6', weight: 5 };
+    }
+    function clearMapHighlights() {
+        if (activeLayer) map.removeLayer(activeLayer);
+        if (hoverLayer) map.removeLayer(hoverLayer);
+        activeLayer = null; hoverLayer = null;
+    }
+    function getMarker(item) {
+        const icon = icons[item.category] || icons.default;
+        return L.marker(item.coords, { icon: icon });
+    }
+    
+    // --- V3.7 修改：比例置中 ---
+    function showDateOnMap(day) {
+        clearMapHighlights();
+        const items = processedTripData.filter(item => item.day === day);
+        const layers = [];
+        items.forEach(item => {
+            let layer;
+            if (item.type === 'point') { layer = getMarker(item); }
+            else if (item.type === 'line') { layer = L.polyline(item.path, getLineStyle(item.transport)); }
+            if (layer) { layers.push(layer); }
+        });
+        if (layers.length > 0) {
+            activeLayer = L.featureGroup(layers).addTo(map);
+            
+            const bounds = activeLayer.getBounds();
+            
+            if (window.innerWidth >= 768) {
+                // 桌面版：計算目標邊距，實現偏左 10% 置中
+                const paddingLeft = 50;
+                const paddingRight = (window.innerWidth * 0.2) + paddingLeft;
+                
+                map.flyToBounds(bounds, { 
+                    paddingTopLeft: [50, paddingLeft],
+                    paddingBottomRight: [50, paddingRight],
+                    maxZoom: 14 
+                });
+            } else {
+                // 手機版：使用標準置中
+                map.flyToBounds(bounds, { 
+                    padding: [50, 50],
+                    maxZoom: 14 
+                });
+            }
+        }
+    }
+
+    function showSingleEventHighlight(index) {
+        const itemIndex = parseInt(index, 10);
+        if (isNaN(itemIndex)) return;
+        
+        const tilePane = map.getPane('tilePane');
+        if (tilePane) {
+            tilePane.style.filter = 'brightness(0.6) grayscale(0.8)';
+            tilePane.style.transition = 'filter 0.3s ease-in-out';
+        }
+        
+        if (hoverLayer) map.removeLayer(hoverLayer);
+
+        if (activeLayer) {
+            activeLayer.eachLayer(layer => {
+                if (layer.setOpacity) {
+                    layer.setOpacity(0.05);
+                } else if (layer.setStyle) {
+                    layer.setStyle({ opacity: 0.05, fillOpacity: 0.2 });
+                }
+            });
+        }
+        
+        const item = processedTripData[itemIndex];
+        if (!item) return;
+
+        if (item.type === 'point') {
+            hoverLayer = getMarker(item).addTo(map);
+        } else if (item.type === 'line') {
+            const style = getLineStyle(item.transport);
+            const startMarker = getMarker({ ...item, category: 'arrival', coords: item.path[0] });
+            const endMarker = getMarker({ ...item, category: 'arrival', coords: item.path[item.path.length - 1] });
+            hoverLayer = L.featureGroup([startMarker, endMarker, L.polyline(item.path, style)]).addTo(map);
+        }
+
+        if (hoverLayer && typeof hoverLayer.bringToFront === 'function') {
+            hoverLayer.bringToFront();
+        }
+    }
+
+    function clearSingleEventHighlight() {
+        const tilePane = map.getPane('tilePane');
+        if (tilePane) { 
+            tilePane.style.filter = ''; 
+        }
+
+        if (hoverLayer) map.removeLayer(hoverLayer);
+        hoverLayer = null;
+
+        if (activeLayer) {
+            activeLayer.eachLayer(layer => {
+                if (layer.setOpacity) {
+                    layer.setOpacity(1);
+                } else if (layer.setStyle) {
+                    layer.setStyle({ opacity: 1, fillOpacity: 1 });
+                }
+            });
+        }
+    }
+
+    function handleCardContainerClick(e) {
+        const dateHeader = e.target.closest('.date-header');
+        const card = e.target.closest('.card');
+        const transitionDuration = 500;
+        if (dateHeader) {
+            const clickedGroup = dateHeader.closest('.map-date-group');
+            if (!clickedGroup) return;
+            const isCurrentlyExpanded = clickedGroup.classList.contains('expanded');
+            if (!isCurrentlyExpanded) {
+                cardsContainer.querySelectorAll('.map-date-group').forEach(group => {
+                    if (group !== clickedGroup) group.classList.remove('expanded');
+                });
+                clickedGroup.classList.add('expanded');
+                showDateOnMap(clickedGroup.dataset.day);
+                setTimeout(() => {
+                    clickedGroup.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }, transitionDuration);
+            } else {
+                clickedGroup.classList.remove('expanded');
+                clearMapHighlights();
+            }
+        } else if (card) {
+            const wasActive = card.classList.contains('active');
+            cardsContainer.querySelectorAll('.card.active').forEach(activeCard => {
+                if (activeCard !== card) { activeCard.classList.remove('active'); }
+            });
+            card.classList.toggle('active');
+
+            if (!wasActive) {
+                 setTimeout(() => {
+                    card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }, transitionDuration / 2);
+            }
+        }
+    }
+
+    // --- 事件監聽 ---
+    tripSelector.addEventListener('change', (e) => {
+        const selectedIndex = e.target.value;
+        if (selectedIndex !== "" && allTrips[selectedIndex]) {
+            const selectedTrip = allTrips[selectedIndex];
+            loadAndDisplayTrip(selectedTrip.dataUrl, selectedTrip.iconUrl);
+        }
+    });
+    mapBtn.addEventListener('click', () => {
+        mapView.classList.remove('hidden');
+        itineraryView.classList.add('hidden');
+        mapBtn.classList.add('bg-white', 'text-blue-600', 'shadow');
+        itineraryBtn.classList.remove('bg-white', 'text-blue-600', 'shadow');
+    });
+    itineraryBtn.addEventListener('click', () => {
+        itineraryView.classList.remove('hidden');
+        mapView.classList.add('hidden');
+        itineraryBtn.classList.add('bg-white', 'text-blue-600', 'shadow');
+        mapBtn.classList.remove('bg-white', 'text-blue-600', 'shadow');
+    });
+    cardsContainer.addEventListener('mouseover', (e) => { 
+        const card = e.target.closest('.card');
+        if (card && card.dataset.index) { showSingleEventHighlight(card.dataset.index); }
+    });
+    cardsContainer.addEventListener('mouseout', () => { clearSingleEventHighlight(); });
+    cardsContainer.addEventListener('click', handleCardContainerClick);
+    itineraryCardsContainer.addEventListener('click', (e) => {
+        const dateHeader = e.target.closest('.date-header');
+        if(dateHeader){
+            const group = dateHeader.closest('.itinerary-date-group');
+            if(group) group.classList.toggle('expanded');
+        }
+    });
+
+    // --- 執行主函式 ---
+    initializeTripSelector();
+
+    </script>
+</body>
+</html>
